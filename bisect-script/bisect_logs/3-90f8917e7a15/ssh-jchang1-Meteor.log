@@ -1,0 +1,14 @@
++ uname -a
+Linux jchang1-Meteor 6.5.0-18-generic #18~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Feb  7 11:40:03 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
++ cd /home/jchang1/work/nfsd
++ cd bisect
++ mv ../bzImage boot/bzImage-upstream
++ mv ../modules.tar lib/modules
++ cd boot
++ ln -sf bzImage-upstream bzImage
++ sha256sum bzImage
+b4bc24510671dbfb9722cde4f92b2cc3701cb2f32af131127b26d8e2a06b5e6e  bzImage
++ cd ../lib/modules
++ tar -xf modules.tar
++ sha256sum modules.tar
+5e687244d781e914045143cf7ae64831a2175a1613497bc776c7bcaae68bb00e  modules.tar

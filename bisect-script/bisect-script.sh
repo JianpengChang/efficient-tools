@@ -12,6 +12,7 @@ REMOTE_EXECUTOR="$SCRIPT_DIR/remote_executor.sh"
 source $SCRIPT_DIR/env.cfg
 
 SSH_OPTIONS="-o ConnectTimeout=10 -o LogLevel=INFO -o StrictHostKeyChecking=no"
+DEVICE_IP=$(/folk/vlm/commandline/vlmTool getAttr -t $BOARD_ID all | grep "IP Address" | cut -d ":" -f 2)
 
 # yocto project parameters
 YOCTO_SRC_CACHE="YOCTO_PROJECT_BASE/layers/wrlinux/wrlinux/recipes-kernel/linux/srcrev.inc"
@@ -25,6 +26,8 @@ if [ -f "$COUNTER_FILE" ]; then
     COUNTER=$((COUNTER + 1))
 else
     COUNTER=1
+fi
+if [ $COUNTER -eq 1 ]; then
     rm -rf $LOG_BASE_DIR
 fi
 echo "$COUNTER" > "$COUNTER_FILE"
@@ -89,10 +92,9 @@ if [ $? -ne 0 ] ; then
     exit $?
 fi
 
-echo "vlmtool reboot -t 24976"
-/folk/vlm/commandline/vlmTool reboot -t 24976
-# sleep 180s waiting for reboot
-sleep 300
+echo "$REBOOT_COMMAND"
+exec_commands "$REBOOT_COMMAND"
+sleep $REBOOT_WAIT_TIME
 
 echo "执行远程命令..."
 ssh-keygen -f "\"$HOME/.ssh/known_hosts\"" -R "\"$DEVICE_IP\""
