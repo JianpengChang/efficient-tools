@@ -1,0 +1,20 @@
+#!/bin/sh
+#usage: cp this script to .git/hooks. It will be executed automatically when git am.
+
+COMMIT_MSG_FILE="$1"
+PATCH_FILE=".git/rebase-apply/patch"
+EMAIL_SOURCE=".git/rebase-apply/$(printf "%04d\n" `cat .git/rebase-apply/next`)"
+
+if [ -f "$EMAIL_SOURCE" ]; then
+    FROM_LINE=$(grep -E -m1 '^From [0-9a-f]{40} ' "$EMAIL_SOURCE")
+    if [ -n "$FROM_LINE" ]; then
+        COMMIT_HASH=$(echo "$FROM_LINE" | awk '{print $2}')
+        sed -i "1a \\\ncommit $COMMIT_HASH upstream." "$COMMIT_MSG_FILE"
+    else
+        echo "jchan-cn waring: cannot find From line, skip add upstream line." >&2
+    fi
+else
+    echo "jchan-cn waring：no temp patch file in $EMAIL_SOURCE" >&2
+fi
+
+exit 0
