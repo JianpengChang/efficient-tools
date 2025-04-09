@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # what to do next:
 # 1. add bisect log after failure, skip the checked commit when re-run
-# 2. use logger to make the log more readable
+# 2. 
 import os
 import sys
 import subprocess
 import shutil
 import time
+import logging
 
 
 def load_env_config():
@@ -29,6 +30,7 @@ def echo_commands(commands, hostname=None):
 
 def run_command(cmd, log_file=None, cwd=None, is_echo=True):
     """execute shell commands and write output to log and terminal in time"""
+    logger.info(f"execute commands:\n{cmd}")
     if is_echo:
         cmd = echo_commands(cmd, os.uname().nodename)
     with open(log_file, "a") if log_file else nullcontext() as log_handle:
@@ -46,7 +48,7 @@ def run_command(cmd, log_file=None, cwd=None, is_echo=True):
             if output == "" and process.poll() is not None:
                 break
             if output:
-                print(output.strip())
+                # print(output.strip())
                 if log_handle:
                     log_handle.write(output)
         if log_handle:
@@ -107,17 +109,28 @@ def main():
         shutil.rmtree(commit_log_dir)
     os.makedirs(commit_log_dir, exist_ok=True)
 
-    f = open(local_log, "w")
-    f.write(f"=== start check commit: {commit_hash} ===\n")
-    f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(message)s",
+        handlers=[logging.FileHandler(local_log), logging.StreamHandler()],
+    )
 
-    f.write("=== start compile linux kernel ===\n")
+    # Create a logger
+    global logger
+    logger = logging.getLogger(__name__)
+
+    # f = open(local_log, "w")
+    logger.info(f"=== start check commit: {commit_hash} ===\n")
+    logger.info(time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
+
+    logger.info("=== start compile linux kernel ===\n")
     exit_code = run_command(COMPILE_COMMAND, local_log, cwd=KERNEL_SRC_DIR)
     if exit_code != 0:
         sys.exit(exit_code)
 
-    f.write("NFS server deployment...\n")
+    logger.info("NFS server deployment...\n")
     nfs_cmd = [
+        "python3",
         REMOTE_EXECUTOR,
         "-u",
         "root",
@@ -134,7 +147,7 @@ def main():
     if exit_code != 0:
         sys.exit(exit_code)
 
-    f.write("execute reboot...\n")
+    logger.info("execute reboot...\n")
     exit_code = run_command(REBOOT_COMMAND, local_log, cwd=KERNEL_SRC_DIR)
     if exit_code != 0:
         sys.exit(exit_code)
@@ -142,7 +155,7 @@ def main():
     time.sleep(REBOOT_WAIT_TIME)
 
     # execute from remote ssh
-    f.write("execute remote test commands...\n")
+    logger.info("execute remote test commands...\n")
     device_ip = get_device_ip()
     if device_ip is None:
         sys.exit(1)
@@ -152,6 +165,7 @@ def main():
     )
 
     remote_cmd = [
+        "python3",
         REMOTE_EXECUTOR,
         "-u",
         "root",
@@ -163,7 +177,6 @@ def main():
         commit_log_dir,
         "-c",
         TEST_COMMAND,
-        "-o",
         SSH_OPTIONS,
     ]
     exit_code = subprocess.call(remote_cmd)
@@ -173,7 +186,7 @@ def main():
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 exec(load_env_config())
 
-REMOTE_EXECUTOR = os.path.join(SCRIPT_DIR, "remote_executor.sh")
+REMOTE_EXECUTOR = os.path.join(SCRIPT_DIR, "remote_executor.py")
 LOG_BASE_DIR = os.path.join(SCRIPT_DIR, "bisect_logs")
 COUNTER_FILE = os.path.join(SCRIPT_DIR, "bisect_counter")
 SSH_OPTIONS = "-o ConnectTimeout=10 -o LogLevel=INFO -o StrictHostKeyChecking=no"
@@ -186,4 +199,6 @@ if test_print:
     print(handle_counter())
     print(get_device_ip())
     print(get_commit_hash())
-main()
+# main()
+if __name__ == "__main__":
+    main()

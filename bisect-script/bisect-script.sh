@@ -6,6 +6,6 @@
 # 125 - skip this commit (compile fail, e.g.)
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
-python3 $SCRIPT_DIR/bisect.py
+python3 $SCRIPT_DIR/git_bisect.py
 
 exit $?
