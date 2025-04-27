@@ -8,13 +8,9 @@ import subprocess
 import shutil
 import time
 import logging
-
-
-def load_env_config():
-    with open(os.path.join(SCRIPT_DIR, "env.cfg"), "r") as file:
-        env_configurations = file.read()
-
-    return env_configurations
+from telnetExecutor import TelnetClient
+from sshExecutor import SSHClient
+from configManager import YAMLConfigManager
 
 
 def echo_commands(commands, hostname=None):
@@ -73,22 +69,9 @@ def handle_counter():
     return counter
 
 
-def get_device_ip():
-    cmd = f"/folk/vlm/commandline/vlmTool getAttr -t {BOARD_ID} all"
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    board_ip = None
-
-    for line in result.stdout.split("\n"):
-        if "IP Address" in line:
-            board_ip = line.split(":")[1].strip()
-    if board_ip is None:
-        print(f"cannot get IP for board {BOARD_ID}", file=sys.stderr)
-    return board_ip
-
-
 def get_commit_hash():
     """get current commit hash ID"""
-    os.chdir(KERNEL_SRC_DIR)
+    os.chdir(global_vars["KERNEL_SRC_DIR"])
     result = subprocess.run(
         "git rev-parse --short HEAD", shell=True, capture_output=True, text=True
     )
@@ -123,82 +106,39 @@ def main():
     logger.info(f"=== start check commit: {commit_hash} ===\n")
     logger.info(time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
 
-    logger.info("=== start compile linux kernel ===\n")
-    exit_code = run_command(COMPILE_COMMAND, local_log, cwd=KERNEL_SRC_DIR)
-    if exit_code != 0:
-        sys.exit(exit_code)
+    execute_items = loaded_config.get_expanded_items()
+    exit_code = 0
+    for item in execute_items:
+        logger.info(item["desc"] + "\n")
+        item["env"]["log_dir"] = commit_log_dir
+        if item["client"] == "telnet":
+            client = TelnetClient(**item["env"])
+        elif item["client"] == "ssh":
+            client = SSHClient(**item["env"])
 
-    logger.info("NFS server deployment...\n")
-    nfs_cmd = [
-        "python3",
-        REMOTE_EXECUTOR,
-        "-u",
-        "root",
-        "-i",
-        "jchang1-Meteor",
-        "-k",
-        os.path.expanduser("~/.ssh/id_rsa"),
-        "-l",
-        commit_log_dir,
-        "-c",
-        NFS_DEPLOY,
-    ]
-    exit_code = subprocess.call(nfs_cmd)
-    if exit_code != 0:
-        sys.exit(exit_code)
+        if client.connect():
+            output = client.execute_commands(item["commands"].strip().split('\n'))
+            for result in output:
+                if not result['success']:
+                    logger.error(f"{result['command']} failed\nOutput: {result['output']}")
+                    exit_code = 1
+            client.close()
+        else:
+            sys.exit(1)
 
-    logger.info("execute reboot...\n")
-    exit_code = run_command(REBOOT_COMMAND, local_log, cwd=KERNEL_SRC_DIR)
-    if exit_code != 0:
-        sys.exit(exit_code)
-
-    time.sleep(REBOOT_WAIT_TIME)
-
-    # execute from remote ssh
-    logger.info("execute remote test commands...\n")
-    device_ip = get_device_ip()
-    if device_ip is None:
-        sys.exit(1)
-    subprocess.call(
-        f"ssh-keygen -f \"{os.path.expanduser('~/.ssh/known_hosts')}\" -R \"{device_ip}\"",
-        shell=True,
-    )
-
-    remote_cmd = [
-        "python3",
-        REMOTE_EXECUTOR,
-        "-u",
-        "root",
-        "-i",
-        device_ip,
-        "-p",
-        "root",
-        "-l",
-        commit_log_dir,
-        "-c",
-        TEST_COMMAND,
-        SSH_OPTIONS,
-    ]
-    exit_code = subprocess.call(remote_cmd)
-    sys.exit(exit_code)
+        if exit_code != 0:
+            sys.exit(exit_code)
 
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-exec(load_env_config())
 
-REMOTE_EXECUTOR = os.path.join(SCRIPT_DIR, "remote_executor.py")
 LOG_BASE_DIR = os.path.join(SCRIPT_DIR, "bisect_logs")
 COUNTER_FILE = os.path.join(SCRIPT_DIR, "bisect_counter")
 SSH_OPTIONS = "-o ConnectTimeout=10 -o LogLevel=INFO -o StrictHostKeyChecking=no"
-test_print = False
-if test_print:
-    print(COMPILE_COMMAND)
-    print(NFS_DEPLOY)
-    print(REBOOT_COMMAND)
-    print(TEST_COMMAND)
-    print(handle_counter())
-    print(get_device_ip())
-    print(get_commit_hash())
+loaded_config = YAMLConfigManager()
+loaded_config.load_from_yaml("env.yaml")
+global_vars = loaded_config.expand_globals()
+
 # main()
 if __name__ == "__main__":
     main()

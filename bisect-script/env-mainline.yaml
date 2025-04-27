@@ -1,0 +1,80 @@
+globals:
+  NFS_SERVER_DIR : /buildarea/nfsroot/jchan
+  KERNEL_SRC_DIR : /buildarea/jchan/linux-stable
+  BOARD_ID : 29338
+
+items:
+- client:
+    ssh
+  env:
+    host: pek-lpggp9
+    username:
+    password:
+    # key_filename: /path/to/key.pem
+    # log_dir:
+  commands: |-
+    cd ${KERNEL_SRC_DIR}
+    
+    make distclean
+    rm -rf testmodules/lib/modules
+    cp /buildarea/jchan/lts24/build-rt/tmp-glibc/work/intel_x86_64-wrs-linux/linux-yocto-rt/6.6.84+git/linux-intel_x86_64-preempt-rt-build/.config .
+    make olddefconfig
+    make -j$(nproc)
+    make INSTALL_MOD_PATH=${KERNEL_SRC_DIR}/testmodules modules_install
+    cd testmodules/lib/modules
+    tar -cvf modules.tar $(ls)
+    mv modules.tar ${KERNEL_SRC_DIR}
+    cd ${KERNEL_SRC_DIR}
+    sha256sum arch/x86/boot/bzImage modules.tar
+    scp arch/x86/boot/bzImage  modules.tar root@jchang1-Meteor:${NFS_SERVER_DIR}
+  desc: |-
+    === start compile linux kernel ===
+
+- client:
+    ssh
+  env:
+    host: pek-lpggp9
+    username:
+    password:
+    # key_filename: /path/to/key.pem
+    # log_dir:
+  commands: |-
+    turnOff -t ${BOARD_ID}
+    copyFile
+    turnOn -t ${BOARD_ID}
+  desc: |-
+    === start copy files to nfs server ===
+
+- client:
+    telnet
+  env:
+    host : 128.224.179.132
+    telnet_server : 128.224.164.38
+    port : 2008
+    username : root
+    password : root
+    prompt : '# ' 
+    #'log_dir': '
+  commands: |-
+    echo "=== system information ==: 
+    uname -a
+    cat /proc/cmdline
+    cat /etc/os-release
+    echo "=== hardware information ==: 
+    dmesg | tail -n 20
+    echo "=== test commands ==: 
+    dmesg -t | grep Reserving | grep crashkernel
+    echo 'KDUMP_KVER: `uname -r`"' > /etc/sysconfig/kdump.conf
+    echo 'KDUMP_CMDLINE: `cat /proc/cmdline` 1 irqpoll nr_cpus=1 reset_devices"' >> /etc/sysconfig/kdump.conf
+    echo 'KDUMP_KIMAGE: /boot/bzImage-${KDUMP_KVER}"' >> /etc/sysconfig/kdump.conf
+    echo 'KDUMP_VMCORE_PATH: /var/crash/`date +"%Y-%m-%d"`"' >> /etc/sysconfig/kdump.conf
+    echo 'MAKEDUMPFILE_ARGS: --dump-dmesg -x /boot/vmlinux-`uname -r`"' >> /etc/sysconfig/kdump.conf
+    cat /etc/sysconfig/kdump.conf
+    systemctl restart kdump.service
+    systemctl --no-pager status kdump.service
+    cat /sys/kernel/kexec_crash_loaded
+    sfd
+
+    cat /proc/cmdline
+  desc: |-
+    === start remote test commands ===

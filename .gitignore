@@ -1,2 +1,4 @@
 bisect-script.sh
 __pycache__
+bisect_counter
+bisect_logs
