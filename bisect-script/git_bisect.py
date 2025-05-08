@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # what to do next:
 # 1. add bisect log after failure, skip the checked commit when re-run
-# 2. 
+# 2.
+from contextlib import nullcontext
 import os
 import sys
 import subprocess
@@ -13,43 +14,93 @@ from sshExecutor import SSHClient
 from configManager import YAMLConfigManager
 
 
-def echo_commands(commands, hostname=None):
-    prefix = "run "
-    ECHO_COMMAND = f"""run() {{ echo "jchan-cn@{hostname}$ $@"; "$@";}}
-"""
-    lines = commands.splitlines()
+class LocalhostClient:
+    """
+    Object-oriented Localhost client for executing commands
+    with comprehensive logging and result verification.
+    """
 
-    prefixed_lines = [prefix + line for line in lines]
+    def __init__(
+        self,
+        exit_on_fail = True,
+        log_dir: str = "",
+    ):
+        self.exit_on_fail = exit_on_fail
+        self.log_file = os.path.join(log_dir, f"lcoalhost.log")
+        self.prompt = f"{os.getlogin()}@{os.uname().nodename}$ "
+        self.is_echo = True
 
-    return ECHO_COMMAND + "\n".join(prefixed_lines)
+        self.log = open(self.log_file, "a")
 
+        self.process = None
 
-def run_command(cmd, log_file=None, cwd=None, is_echo=True):
-    """execute shell commands and write output to log and terminal in time"""
-    logger.info(f"execute commands:\n{cmd}")
-    if is_echo:
-        cmd = echo_commands(cmd, os.uname().nodename)
-    with open(log_file, "a") if log_file else nullcontext() as log_handle:
-        process = subprocess.Popen(
-            cmd,
-            shell=True,
+    def connect(self):
+        self.process = subprocess.Popen(
+            ["bash", "--norc", "--noprofile"],  # Disable startup files
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            cwd=cwd,
             text=True,
-            executable="/bin/bash",
+            bufsize=1,
         )
+        return True
+
+    def _read_until_prompt(self, MARKER):
+        return_code = None
+        output = ""
         while True:
-            output = process.stdout.readline()
-            if output == "" and process.poll() is not None:
+            line = self.process.stdout.readline()
+            if not line:
+                break  # Shell process died
+            if MARKER in line:
+                return_code = int(line.split(":")[1].strip())
                 break
-            if output:
-                # print(output.strip())
-                if log_handle:
-                    log_handle.write(output)
-        if log_handle:
-            log_handle.flush()
-        return process.poll()
+            output += line
+            self.log.write(line)
+        self.log.flush()
+        return return_code, output
+
+    def execute_commands(self, commands):
+        """execute shell commands and write output to log and terminal in time"""
+        # logger.info(f"execute commands:\n{commands}")
+        if self.process is None:
+            return False, "create process failed"
+
+        MARKER = "COMMAND_FINISHED_MARKER"
+        results = []
+
+        for command in commands:
+            if command == "":
+                continue
+            if self.is_echo:
+                self.log.write(f"{self.prompt}{command}\n")
+
+            full_cmd = f"{command}; echo {MARKER}:$?\n"
+            self.process.stdin.write(full_cmd)
+            self.process.stdin.flush()
+
+            return_code, output = self._read_until_prompt(MARKER)
+
+            results.append(
+                {"command": command, "output": output, "success": return_code == 0}
+            )
+            if return_code != 0:
+                print(f"❌ Command failed: {command}")
+                print(f"output:\n{output}")
+                if self.exit_on_fail:
+                    break
+            else:
+                print(f"✅ Command succeeded: {command}")
+
+        return results
+
+    def close(self):
+        """Close telnet connection and log file"""
+        if self.process:
+            self.process.kill()  # Terminate the shell session
+            self.process.stdin.close()
+            self.process.wait()
+        self.log.close()
 
 
 def handle_counter():
@@ -110,17 +161,23 @@ def main():
     exit_code = 0
     for item in execute_items:
         logger.info(item["desc"] + "\n")
+        if item["env"] is None:
+            item["env"] = {}
         item["env"]["log_dir"] = commit_log_dir
         if item["client"] == "telnet":
             client = TelnetClient(**item["env"])
         elif item["client"] == "ssh":
             client = SSHClient(**item["env"])
+        elif item["client"] == "localhost":
+            client = LocalhostClient(**item["env"])
 
         if client.connect():
-            output = client.execute_commands(item["commands"].strip().split('\n'))
+            output = client.execute_commands(item["commands"].strip().split("\n"))
             for result in output:
-                if not result['success']:
-                    logger.error(f"{result['command']} failed\nOutput: {result['output']}")
+                if not result["success"]:
+                    logger.error(
+                        f"{result['command']} failed\nOutput: {result['output']}"
+                    )
                     exit_code = 1
             client.close()
         else:

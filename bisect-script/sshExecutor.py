@@ -21,6 +21,7 @@ class SSHClient:
         key_filename: str = None,
         port: int = 22,
         log_dir: str = "",
+        exit_on_fail = True,
     ):
         """
         Initialize SSH client with connection parameters
@@ -43,6 +44,7 @@ class SSHClient:
         self.channel = None
         self.connected = False
         self.prompt = None
+        self.exit_on_fail = exit_on_fail
 
         self.log = open(self.log_file, "a")
 
@@ -172,13 +174,13 @@ class SSHClient:
             success, output = self.execute_command(cmd.strip(), timeout)
             # output.replace('\r\n', '\n')
             if print_result:
-                print(f"\n{'='*50}")
-                print(f"Command: {cmd}")
-                print(f"Success: {success}")
+                prompt = "✅ Command succeeded:" if success else "❌ Command failed:"
+                print(f"{prompt} {cmd}")
+                results.append({"command": cmd, "output": output, "success": success})
                 if not success:
-                    print(f"Output:\n{output}\n{'='*50}")
-
-            results.append({"command": cmd, "output": output, "success": success})
+                    print(f"Output:\n{output}")
+                    if self.exit_on_fail:
+                        break
         return results
 
     def execute_command(

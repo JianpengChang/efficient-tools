@@ -16,6 +16,7 @@ class TelnetClient:
         prompt="# ",
         timeout=5,
         log_dir="",
+        exit_on_fail=True,
     ):
         self.host = host
         self.telnet_server = telnet_server
@@ -28,6 +29,7 @@ class TelnetClient:
         self.conn = None
         self.log = open(self.log_file, "a")  # Append mode to preserve history
         self.commands = ["dmesg -n 1"]
+        self.exit_on_fail = exit_on_fail
 
     def connect(self):
         """Establish telnet connection and login if credentials are provided"""
@@ -67,13 +69,13 @@ class TelnetClient:
                 success = self._check_success(output)
             output.replace("\r\n", "\n")
             if print_result:
-                print(f"\n{'='*50}")
-                print(f"Command: {cmd}")
-                print(f"Success: {success}")
+                prompt = "✅ Command succeeded:" if success else "❌ Command failed:"
+                print(f"{prompt} {cmd}")
+                results.append({"command": cmd, "output": output, "success": success})
                 if not success:
-                    print(f"Output:\n{output}\n{'='*50}")
-
-            results.append({"command": cmd, "output": output, "success": success})
+                    print(f"Output:\n{output}")
+                    if self.exit_on_fail:
+                        break
         return results
 
     def execute_heredoc(self, command_block, sub_prompt="> ", print_result=True):
@@ -243,4 +245,3 @@ if __name__ == "__main__":
         client.close()
     else:
         print("Failed to connect to server")
-
