@@ -9,6 +9,7 @@ import subprocess
 import shutil
 import time
 import logging
+from typing import Tuple
 from telnetExecutor import TelnetClient
 from sshExecutor import SSHClient
 from configManager import YAMLConfigManager
@@ -22,10 +23,11 @@ class LocalhostClient:
 
     def __init__(
         self,
-        exit_on_fail = True,
+        exit_on_fail=True,
         log_dir: str = "",
     ):
         self.exit_on_fail = exit_on_fail
+        self.log_dir = log_dir
         self.log_file = os.path.join(log_dir, f"lcoalhost.log")
         self.prompt = f"{os.getlogin()}@{os.uname().nodename}$ "
         self.is_echo = True
@@ -33,6 +35,8 @@ class LocalhostClient:
         self.log = open(self.log_file, "a")
 
         self.process = None
+        self.namespace = {"client": self}
+        self.namespace.update(globals())
 
     def connect(self):
         self.process = subprocess.Popen(
@@ -46,7 +50,7 @@ class LocalhostClient:
         return True
 
     def _read_until_prompt(self, MARKER):
-        return_code = None
+        return_code = 0
         output = ""
         while True:
             line = self.process.stdout.readline()
@@ -58,33 +62,62 @@ class LocalhostClient:
             output += line
             self.log.write(line)
         self.log.flush()
-        return return_code, output
+        return return_code == 0, output
 
-    def execute_commands(self, commands):
-        """execute shell commands and write output to log and terminal in time"""
-        # logger.info(f"execute commands:\n{commands}")
+    def execute_command(self, command) -> Tuple[bool, str]:
+        """Execute a single command and return the result"""
+
+        MARKER = "COMMAND_FINISHED_MARKER"
+        return_code = 0
+        force_true = False
+        output = ""
+        full_cmd = ""
+
         if self.process is None:
             return False, "create process failed"
 
-        MARKER = "COMMAND_FINISHED_MARKER"
-        results = []
+        if "skip-check:" in command:
+            command = command.split(":")[1].strip()
+            force_true = True
 
-        for command in commands:
-            if command == "":
-                continue
-            if self.is_echo:
-                self.log.write(f"{self.prompt}{command}\n")
+        if self.is_echo:
+            self.log.write(f"{self.prompt}{command}\n")
 
+        if command == "":
+            return True, ""
+
+        if "internal-command:pyfunc:" in command:
+            try:
+                return_code, output = eval(
+                    command.split(":")[2].strip(), self.namespace
+                )
+            except Exception as e:
+                return_code = False
+                output = str(e)
+        else:
             full_cmd = f"{command}; echo {MARKER}:$?\n"
             self.process.stdin.write(full_cmd)
             self.process.stdin.flush()
 
             return_code, output = self._read_until_prompt(MARKER)
 
+        if force_true:
+            return_code = True
+
+        return return_code, output
+
+    def execute_commands(self, commands):
+        """execute shell commands and write output to log and terminal in time"""
+        # logger.info(f"execute commands:\n{commands}")
+        results = []
+
+        for command in commands:
+            return_code, output = self.execute_command(command)
+
             results.append(
-                {"command": command, "output": output, "success": return_code == 0}
+                {"command": command, "output": output, "success": return_code}
             )
-            if return_code != 0:
+            if not return_code:
                 print(f"❌ Command failed: {command}")
                 print(f"output:\n{output}")
                 if self.exit_on_fail:
@@ -160,6 +193,8 @@ def main():
     execute_items = loaded_config.get_expanded_items()
     exit_code = 0
     for item in execute_items:
+        # 2 seconds to wait hardware to start work
+        time.sleep(2)
         logger.info(item["desc"] + "\n")
         if item["env"] is None:
             item["env"] = {}
@@ -171,17 +206,26 @@ def main():
         elif item["client"] == "localhost":
             client = LocalhostClient(**item["env"])
 
+        if "funcs" in item:
+            for i in item["funcs"]:
+                if i["type"] == "pyfunc":
+                    exec(i["source"], client.namespace)
+
+        output = []
         if client.connect():
-            output = client.execute_commands(item["commands"].strip().split("\n"))
-            for result in output:
-                if not result["success"]:
-                    logger.error(
-                        f"{result['command']} failed\nOutput: {result['output']}"
-                    )
-                    exit_code = 1
+            try:
+                output = client.execute_commands(item["commands"].strip().split("\n"))
+            except Exception as e:
+                print(str(e))
             client.close()
         else:
             sys.exit(1)
+
+        print("=" * 50)
+        for result in output:
+            if not result["success"]:
+                logger.error(f"{result['command']} failed\nOutput: {result['output']}")
+                exit_code = 1
 
         if exit_code != 0:
             sys.exit(exit_code)

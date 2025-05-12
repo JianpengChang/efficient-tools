@@ -10,9 +10,9 @@ class TelnetClient:
         self,
         host,
         telnet_server,
+        username,
+        password,
         port=23,
-        username=None,
-        password=None,
         prompt="# ",
         timeout=5,
         log_dir="",
@@ -25,11 +25,15 @@ class TelnetClient:
         self.password = password
         self.prompt = prompt
         self.timeout = timeout
+        self.log_dir = log_dir
         self.log_file = os.path.join(log_dir, f"telnet-{telnet_server}-{port}.log")
         self.conn = None
         self.log = open(self.log_file, "a")  # Append mode to preserve history
         self.commands = ["dmesg -n 1"]
         self.exit_on_fail = exit_on_fail
+
+        self.namespace = {"client": self}
+        self.namespace.update(globals())
 
     def connect(self):
         """Establish telnet connection and login if credentials are provided"""
@@ -51,31 +55,26 @@ class TelnetClient:
             if self._read_until(self.prompt) == "":
                 print("cannot read prompt, connect failed\n")
                 return False
-            self.execute_commands(self.commands)
+            # self.execute_commands(self.commands)
             return True
         except Exception as e:
             print(str(e))
             self._log_error(f"Connection failed: {str(e)}")
             return False
 
-    def execute_commands(self, commands, check_success=True, print_result=True):
+    def execute_commands(self, commands, check_success=True):
         """Execute multiple commands and return results with success status"""
         results = []
-        success = True
         self._read_all_available()
         for cmd in commands:
-            output = self.execute_command(cmd.strip())
-            if check_success:
-                success = self._check_success(output)
-            output.replace("\r\n", "\n")
-            if print_result:
-                prompt = "✅ Command succeeded:" if success else "❌ Command failed:"
-                print(f"{prompt} {cmd}")
-                results.append({"command": cmd, "output": output, "success": success})
-                if not success:
-                    print(f"Output:\n{output}")
-                    if self.exit_on_fail:
-                        break
+            success, output = self.execute_command(cmd, check_success=check_success)
+            prompt = "✅ Command succeeded:" if success else "❌ Command failed:"
+            print(f"{prompt} {cmd}")
+            results.append({"command": cmd, "output": output, "success": success})
+            if not success:
+                print(f"Output:\n{output}")
+                if self.exit_on_fail:
+                    break
         return results
 
     def execute_heredoc(self, command_block, sub_prompt="> ", print_result=True):
@@ -98,16 +97,36 @@ class TelnetClient:
                 # print(f"Output:\n{result['output']}\n{'='*50}")
         return results
 
-    def execute_command(self, command, prompt=None):
+    def execute_command(self, command, prompt=None, check_success=True):
         """Execute a single command and return its output"""
         prompt = self.prompt if prompt is None else prompt
-        try:
-            self._write(command)
-            output = self._read_until(prompt)
-            return output
-        except Exception as e:
-            self._log_error(f"Command execution failed: {str(e)}")
-            return None
+        output = ""
+        success = True
+
+        if "internal-command:pyfunc:" in command:
+            try:
+                success, output = eval(command.split(":")[2].strip(), self.namespace)
+            except Exception as e:
+                success = False
+                output = str(e)
+            return success, output
+        else:
+            if "skip-check:" in command:
+                command = command.split(":")[1].strip()
+                check_success = False
+
+            try:
+                self._write(command)
+                output = self._read_until(prompt)
+            except Exception as e:
+                self._log_error(f"Command execution failed: {str(e)}")
+                return False, output
+
+        if check_success:
+            success = self._check_success(output)
+        output.replace("\r\n", "\n")
+
+        return success, output
 
     def close(self):
         """Close telnet connection and log file"""

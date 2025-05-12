@@ -21,7 +21,7 @@ class SSHClient:
         key_filename: str = None,
         port: int = 22,
         log_dir: str = "",
-        exit_on_fail = True,
+        exit_on_fail=True,
     ):
         """
         Initialize SSH client with connection parameters
@@ -39,14 +39,19 @@ class SSHClient:
         self.password = password
         self.key_filename = key_filename
         self.port = port
+        self.log_dir = log_dir
         self.log_file = os.path.join(log_dir, f"ssh-{host}-{port}.log")
         self.client = None
         self.channel = None
         self.connected = False
         self.prompt = None
+        self.timeout = 5
         self.exit_on_fail = exit_on_fail
 
         self.log = open(self.log_file, "a")
+
+        self.namespace = {"client": self}
+        self.namespace.update(globals())
 
     def connect(self) -> bool:
         """
@@ -164,35 +169,33 @@ class SSHClient:
 
         return int(exit_code_match.group(1)) == 0
 
-    def execute_commands(
-        self, commands: str, timeout: int = None, print_result: bool = True
-    ):
+    def execute_commands(self, commands: str, check_success: bool = True):
         results = []
         success = True
 
         for cmd in commands:
-            success, output = self.execute_command(cmd.strip(), timeout)
+            success, output = self.execute_command(
+                cmd.strip(), check_success=check_success
+            )
             # output.replace('\r\n', '\n')
-            if print_result:
-                prompt = "✅ Command succeeded:" if success else "❌ Command failed:"
-                print(f"{prompt} {cmd}")
-                results.append({"command": cmd, "output": output, "success": success})
-                if not success:
-                    print(f"Output:\n{output}")
-                    if self.exit_on_fail:
-                        break
+            prompt = "✅ Command succeeded:" if success else "❌ Command failed:"
+            print(f"{prompt} {cmd}")
+            results.append({"command": cmd, "output": output, "success": success})
+            if not success:
+                print(f"Output:\n{output}")
+                if self.exit_on_fail:
+                    break
         return results
 
     def execute_command(
-        self, command: str, timeout: int = 30, check_exit_code: bool = True
+        self, command: str, check_success: bool = True
     ) -> Tuple[bool, str]:
         """
         Execute a single command and return the result
 
         Args:
             command: Command to execute
-            timeout: Maximum time to wait for completion in seconds
-            check_exit_code: Whether to check the command exit code
+            check_success: Whether to check the command exit code
 
         Returns:
             Tuple[bool, str]: Success status and command output
@@ -200,27 +203,40 @@ class SSHClient:
         if not self.connected:
             return False, "Not connected to server"
         output = ""
-        try:
-            # Send command with newline
-            self._write_log(command + "\n")
-            self.channel.send(command + "\n")
+        success = True
 
-            # Get command output
-            output = self._read_until_prompt(timeout=timeout)
+        if "internal-command:pyfunc:" in command:
+            try:
+                success, output = eval(command.split(":")[2].strip(), self.namespace)
+            except Exception as e:
+                success = False
+                output = str(e)
+            return success, output
+        else:
+            if "skip-check:" in command:
+                command = command.split(":")[1].strip()
+                check_success = False
+            try:
+                # Send command with newline
+                self._write_log(command + "\n")
+                self.channel.send(command + "\n")
 
-            if check_exit_code:
-                success = self._check_success()
-                if not success:
-                    self._write_log(
-                        f"{output}\n\nCommand failed with exit code: {success}"
-                    )
-                    return False, output
+                # Get command output
+                output = self._read_until_prompt(timeout=self.timeout)
 
-            return True, output
+                if check_success:
+                    success = self._check_success()
+                    if not success:
+                        self._write_log(
+                            f"{output}\n\nCommand failed with exit code: {success}"
+                        )
+                        return False, output
 
-        except Exception as e:
-            self._write_log(f"Error executing command: {str(e)}")
-            return False, str(e)
+                return True, output
+
+            except Exception as e:
+                self._write_log(f"Error executing command: {str(e)}")
+                return False, str(e)
 
     def execute_script(
         self,
@@ -297,7 +313,7 @@ class SSHClient:
         self.log.write(f"{message}")
         self.log.flush()
 
-    def _read_until_prompt(self, timeout: int = 30, log=True) -> str:
+    def _read_until_prompt(self, timeout: int = 10, log=True) -> str:
         """
         Read from channel until a shell prompt is found or timeout occurs
 
