@@ -45,7 +45,7 @@ class SSHClient:
         self.channel = None
         self.connected = False
         self.prompt = None
-        self.timeout = 5
+        self.timeout = 30
         self.exit_on_fail = exit_on_fail
 
         self.log = open(self.log_file, "a")
@@ -100,20 +100,20 @@ class SSHClient:
             self.prompt = self._read_until_prompt().strip()
 
             self.connected = True
-            self._write_log("Connection established successfully.")
+            self._write_log("\nConnection established successfully.")
             return True
 
         except Exception as e:
-            self._write_log(f"Connection failed: {str(e)}")
+            self._write_log(f"\nConnection failed: {str(e)}")
             return False
 
     def close(self) -> None:
         """Close the SSH connection"""
         if self.client:
-            self._write_log("Disconnecting from server...")
+            self._write_log("\nDisconnecting from server...")
             self.client.close()
             self.connected = False
-            self._write_log("Connection closed.")
+            self._write_log("\nConnection closed.")
         self.log.close()
 
     def _configure_terminal(self) -> None:
@@ -188,7 +188,7 @@ class SSHClient:
         return results
 
     def execute_command(
-        self, command: str, check_success: bool = True
+        self, command: str, prompt: str = None, check_success: bool = True
     ) -> Tuple[bool, str]:
         """
         Execute a single command and return the result
@@ -205,7 +205,7 @@ class SSHClient:
         output = ""
         success = True
 
-        if "internal-command:pyfunc:" in command:
+        if "internal-pyfunc:" in command:
             try:
                 success, output = eval(command.split(":")[2].strip(), self.namespace)
             except Exception as e:
@@ -235,7 +235,7 @@ class SSHClient:
                 return True, output
 
             except Exception as e:
-                self._write_log(f"Error executing command: {str(e)}")
+                self._write_log(f"\nError executing command: {str(e)}")
                 return False, str(e)
 
     def execute_script(
@@ -313,7 +313,7 @@ class SSHClient:
         self.log.write(f"{message}")
         self.log.flush()
 
-    def _read_until_prompt(self, timeout: int = 10, log=True) -> str:
+    def _read_until_prompt(self, timeout: int = None, log=True) -> str:
         """
         Read from channel until a shell prompt is found or timeout occurs
 
@@ -344,7 +344,7 @@ class SSHClient:
                 time.sleep(0.1)
 
         if timeout is not None and (time.time() - start_time) >= timeout:
-            self._write_log("Timeout waiting for command completion")
+            self._write_log("Timeout waiting for command completion\n")
 
         return output
 

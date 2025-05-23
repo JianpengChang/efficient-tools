@@ -35,6 +35,21 @@ class TelnetClient:
         self.namespace = {"client": self}
         self.namespace.update(globals())
 
+    def _login(self):
+        # Handle login if credentials are provided
+        if self.username and self.password:
+            self._write("\n")
+            self.conn.read_until("login: ".encode("ascii"))
+            self._write(self.username)
+            self.conn.read_until("Password: ".encode("ascii"), timeout=self.timeout)
+            self._write(self.password)
+
+        # Verify successful connection by waiting for prompt
+        if self._read_until(self.prompt) == "":
+            print("cannot read prompt, connect failed\n")
+            return False
+        return True
+
     def connect(self):
         """Establish telnet connection and login if credentials are provided"""
         if not self._wait_for_device():
@@ -43,20 +58,7 @@ class TelnetClient:
         try:
             self.conn = telnetlib.Telnet(self.telnet_server, self.port, self.timeout)
 
-            # Handle login if credentials are provided
-            if self.username and self.password:
-                self._write("\n")
-                self.conn.read_until("login: ".encode("ascii"))
-                self._write(self.username)
-                self.conn.read_until("Password: ".encode("ascii"), timeout=self.timeout)
-                self._write(self.password)
-
-            # Verify successful connection by waiting for prompt
-            if self._read_until(self.prompt) == "":
-                print("cannot read prompt, connect failed\n")
-                return False
-            # self.execute_commands(self.commands)
-            return True
+            return self._login()
         except Exception as e:
             print(str(e))
             self._log_error(f"Connection failed: {str(e)}")
@@ -103,7 +105,7 @@ class TelnetClient:
         output = ""
         success = True
 
-        if "internal-command:pyfunc:" in command:
+        if "internal-pyfunc:" in command:
             try:
                 success, output = eval(command.split(":")[2].strip(), self.namespace)
             except Exception as e:
@@ -170,7 +172,12 @@ class TelnetClient:
         self.conn.write(text.encode("ascii") + b"\n")
 
     def _read_all_available(self, timeout=5):
-        """Read all remaining data until no more data arrives"""
+        """
+        Read all remaining data until no more data arrives
+
+        args:
+            timeout: the Maximum continuous output
+        """
         buffer = bytearray()
         start_time = time.time()
 
